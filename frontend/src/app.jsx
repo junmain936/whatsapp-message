@@ -140,9 +140,10 @@ function LoginScreen({ onLogin }) {
   const [qrTimer, setQrTimer]       = useState(QR_EXPIRE);
   const [qrExpired, setQrExpired]   = useState(false);
 
-  const pollRef     = useRef(null);
-  const timerRef    = useRef(null);
-  const qrPollRef   = useRef(null);
+  const pollRef        = useRef(null);
+  const timerRef       = useRef(null);
+  const qrPollRef      = useRef(null);
+  const qrInitialized  = useRef(false);
 
   const cleanPhone = phone.replace(/\D/g,"");
 
@@ -157,6 +158,7 @@ function LoginScreen({ onLogin }) {
           clearInterval(pollRef.current);
           clearInterval(timerRef.current);
           clearInterval(qrPollRef.current);
+          qrInitialized.current = false;
           onLogin(data.phone || cleanPhone);
         }
       } catch {}
@@ -171,6 +173,10 @@ function LoginScreen({ onLogin }) {
 
   // ── QR FETCH ──
   const fetchQR = useCallback(async () => {
+    // Agar already loading hai toh skip karo (double-call guard)
+    if (qrInitialized.current && !qrExpired && !qrError) return;
+    qrInitialized.current = true;
+
     setQrLoading(true);
     setQrError("");
     setQrExpired(false);
@@ -219,14 +225,16 @@ function LoginScreen({ onLogin }) {
     }
   }, [startPolling]);
 
-  // QR mode pe aane pe auto fetch
+  // QR mode pe aane pe auto fetch (sirf ek baar)
   useEffect(() => {
     if (mode === "qr") {
+      qrInitialized.current = false;
       fetchQR();
     }
     return () => {
       clearInterval(timerRef.current);
       clearInterval(pollRef.current);
+      qrInitialized.current = false;
     };
   }, [mode]);
 
@@ -298,6 +306,7 @@ function LoginScreen({ onLogin }) {
                 setMode(m); setStep(1); setError("");
                 setPairingCode(""); setQrImage(null);
                 setQrExpired(false); setQrError("");
+                qrInitialized.current = false;
                 clearInterval(pollRef.current);
                 clearInterval(timerRef.current);
               }}
@@ -383,13 +392,13 @@ function LoginScreen({ onLogin }) {
 
                 {/* Refresh button */}
                 {(qrExpired || qrError) && (
-                  <button className="btn-primary" onClick={fetchQR} style={{ marginTop:16 }}>
+                  <button className="btn-primary" onClick={()=>{ qrInitialized.current=false; fetchQR(); }} style={{ marginTop:16 }}>
                     <span>{Icon.refresh}</span> Naya QR Generate Karo
                   </button>
                 )}
 
                 {qrImage && !qrExpired && (
-                  <button className="btn-ghost" onClick={fetchQR} style={{ margin:"12px auto 0", width:"auto" }}>
+                  <button className="btn-ghost" onClick={()=>{ qrInitialized.current=false; fetchQR(); }} style={{ margin:"12px auto 0", width:"auto" }}>
                     {Icon.refresh} Refresh QR
                   </button>
                 )}
