@@ -2,12 +2,19 @@ services:
   - type: web
     name: wa-sender-backend
     runtime: node
-    buildCommand: npm install
+    rootDir: backend
+    buildCommand: apt-get install -y google-chrome-stable && npm install
     startCommand: node index.js
     envVars:
       - key: NODE_ENV
         value: production
-    disk:
-      name: wa-session
-      mountPath: /opt/render/project/src/wa-session
-      sizeGB: 1
+      - key: PUPPETEER_SKIP_DOWNLOAD
+        value: "true"
+      - key: CHROME_PATH
+        value: /usr/bin/google-chrome-stable
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: wa-session
