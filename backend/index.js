@@ -90,9 +90,10 @@ class SupabaseStore {
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let waClient       = null;
-let clientStatus   = "disconnected";
+let clientStatus   = "disconnected"; // disconnected | initializing | qr_ready | connected
 let currentQR      = null;
 let connectedPhone = "";
+let initInProgress = false; // guard — ek baar mein ek hi init chale
 
 // ─── CHROME PATH DETECT ───────────────────────────────────────────────────────
 function getChromePath() {
@@ -115,14 +116,27 @@ function getChromePath() {
 }
 
 // ─── WA CLIENT INIT ───────────────────────────────────────────────────────────
-function initClient() {
-  if (waClient) {
-    waClient.destroy().catch(() => {});
+function initClient(force = false) {
+  // Already connected toh dobara init mat karo
+  if (clientStatus === "connected" && !force) {
+    console.log("[WA] Already connected, skipping init");
+    return;
   }
 
-  clientStatus = "initializing";
-  currentQR    = null;
-  waClient     = null;
+  // Agar pehle se init chal raha hai toh skip karo
+  if (initInProgress && !force) {
+    console.log("[WA] Init already in progress, skipping");
+    return;
+  }
+
+  if (waClient) {
+    waClient.destroy().catch(() => {});
+    waClient = null;
+  }
+
+  initInProgress = true;
+  clientStatus   = "initializing";
+  currentQR      = null;
 
   const chromePath = getChromePath();
 
@@ -145,23 +159,30 @@ function initClient() {
         "--disable-gpu",
       ],
     },
-  webVersionCache: {
-  type: "remote",
-  remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html",
-},
+    webVersionCache: {
+      type: "remote",
+      remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html",
+    },
   });
 
   client.on("qr", async (qr) => {
     clientStatus = "qr_ready";
+    initInProgress = false;
     try { currentQR = await qrcode.toDataURL(qr); } catch {}
     console.log("[WA] QR ready");
   });
 
   client.on("ready", () => {
     clientStatus   = "connected";
+    initInProgress = false;
     currentQR      = null;
     connectedPhone = client.info?.wid?.user || "";
     console.log("[WA] Connected:", connectedPhone);
+  });
+
+  client.on("authenticated", () => {
+    console.log("[WA] Authenticated — session loading...");
+    clientStatus = "initializing"; // connected nahi hua abhi, wait karo
   });
 
   client.on("remote_session_saved", () => {
@@ -169,18 +190,25 @@ function initClient() {
   });
 
   client.on("auth_failure", (msg) => {
-    clientStatus = "disconnected";
+    clientStatus   = "disconnected";
+    initInProgress = false;
+    currentQR      = null;
     console.error("[WA] Auth failed:", msg);
   });
 
   client.on("disconnected", (reason) => {
     clientStatus   = "disconnected";
+    initInProgress = false;
     connectedPhone = "";
+    currentQR      = null;
     console.log("[WA] Disconnected:", reason);
+    // Auto reconnect after 5s
+    setTimeout(() => initClient(), 5000);
   });
 
   client.initialize().catch((err) => {
-    clientStatus = "disconnected";
+    clientStatus   = "disconnected";
+    initInProgress = false;
     console.error("[WA] Init error:", err.message);
   });
 
@@ -210,47 +238,6 @@ app.get("/api/qr", (req, res) => {
     return res.status(404).json({ error: "QR abhi ready nahi, thoda wait karo" });
   }
   res.json({ qr: currentQR });
-});
-
-// Pairing code request
-app.post("/api/request-code", async (req, res) => {
-  const { phone } = req.body;
-  if (!phone) return res.status(400).json({ error: "Phone number chahiye" });
-
-  const cleanPhone = phone.replace(/\D/g, "");
-
-  if (clientStatus === "connected") {
-    return res.status(400).json({ error: "Pehle se connected hai" });
-  }
-
-  initClient();
-
-  // pupPage ready hone ka wait karo (max 60 sec)
-  let waited = 0;
-  while (waited < 60000) {
-    await new Promise((r) => setTimeout(r, 1000));
-    waited += 1000;
-
-    if (waClient && waClient.pupPage && !waClient.pupPage.isClosed()) {
-      console.log("[WA] pupPage ready after", waited, "ms");
-      break;
-    }
-  }
-
-  if (!waClient || !waClient.pupPage || waClient.pupPage.isClosed()) {
-    return res.status(500).json({
-      error: "Browser ready nahi hua, thoda wait karke dobara try karo",
-    });
-  }
-
-  try {
-    const code = await waClient.requestPairingCode(cleanPhone);
-    console.log("[WA] Pairing code generated");
-    res.json({ code: code.replace(/-/g, "") });
-  } catch (err) {
-    console.error("[WA] Pairing error:", err.message);
-    res.status(500).json({ error: "Code nahi mila: " + err.message });
-  }
 });
 
 // Send message
@@ -295,6 +282,7 @@ app.post("/api/logout", async (req, res) => {
     await supabase.storage.from(BUCKET).remove(["RemoteAuth.zip"]);
 
     clientStatus   = "disconnected";
+    initInProgress = false;
     connectedPhone = "";
     currentQR      = null;
     waClient       = null;
@@ -304,9 +292,13 @@ app.post("/api/logout", async (req, res) => {
   }
 });
 
-// Re-init
+// Re-init — sirf force=true se kaam karo, warna existing session maintain hoti hai
 app.post("/api/reinit", (req, res) => {
-  initClient();
+  const force = req.body?.force === true;
+  if (clientStatus === "connected" && !force) {
+    return res.json({ success: false, message: "Already connected, reinit skip kiya" });
+  }
+  initClient(force);
   res.json({ success: true, message: "Reinitializing..." });
 });
 
