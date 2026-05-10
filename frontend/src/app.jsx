@@ -18,6 +18,29 @@ function parseNumbers(raw) {
   )];
 }
 
+// CSV parse — returns [{number, ...otherCols}]
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+  const numIdx = headers.findIndex(h => h.includes("number") || h.includes("phone") || h.includes("mobile") || h === "no");
+  if (numIdx === -1) return [];
+  return lines.slice(1).map(line => {
+    const cols = line.split(",").map(c => c.trim());
+    const rawNum = cols[numIdx]?.replace(/\D/g, "") || "";
+    if (rawNum.length < 10) return null;
+    const number = rawNum.startsWith("91") ? rawNum : `91${rawNum}`;
+    const extra = {};
+    headers.forEach((h, i) => { if (i !== numIdx) extra[h] = cols[i] || ""; });
+    return { number, ...extra };
+  }).filter(Boolean);
+}
+
+// Replace {name}, {city} etc in message
+function applyVars(msg, row) {
+  return msg.replace(/\{(\w+)\}/g, (_, key) => row[key.toLowerCase()] ?? `{${key}}`);
+}
+
 function fmt(n) { return `+${n.slice(0,2)} ${n.slice(2,7)} ${n.slice(7)}`; }
 
 // ─── ICONS ───────────────────────────────────────────────────────────────────
@@ -30,6 +53,9 @@ const Icon = {
   check: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>,
   x: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
   refresh: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>,
+  upload: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+  edit: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  trash: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>,
 };
 
 // ─── CSS ─────────────────────────────────────────────────────────────────────
@@ -118,6 +144,32 @@ const CSS = `
 
   .log-row { animation: slideUp .2s ease forwards; }
   .log-row:hover { background: rgba(255,255,255,.02); }
+
+  .upload-zone {
+    width:100%; padding:20px;
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius);
+    background: var(--bg);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+    cursor:pointer; transition: border-color .15s, background .15s;
+    color: var(--muted); font-size:13px; text-align:center;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--green); background: var(--green-bg); color:var(--green); }
+  .upload-zone input[type=file] { display:none; }
+
+  .mode-toggle {
+    display:flex; background:var(--bg); border:1px solid var(--border2);
+    border-radius:8px; overflow:hidden; width:100%;
+  }
+  .mode-toggle button {
+    flex:1; padding:8px 12px; border:none;
+    font-size:12px; font-weight:500; cursor:pointer;
+    transition: all .15s; font-family:var(--font);
+    display:flex; align-items:center; justify-content:center; gap:6px;
+  }
+  .mode-toggle button.active { background:var(--green); color:#000; }
+  .mode-toggle button:not(.active) { background:none; color:var(--muted); }
+  .mode-toggle button:not(.active):hover { color:var(--text); }
 `;
 
 // QR_EXPIRE seconds mein QR expire hota hai
@@ -347,18 +399,26 @@ export default function App() {
   const [loggedIn, setLoggedIn]             = useState(false);
   const [connectedPhone, setConnectedPhone] = useState("");
   const [activeTab, setActiveTab]           = useState("compose");
+  const [inputMode, setInputMode]           = useState("custom"); // "custom" | "csv"
   const [numbersRaw, setNumbersRaw]         = useState("");
+  const [csvRows, setCsvRows]               = useState([]);   // [{number, name, ...}]
+  const [csvFileName, setCsvFileName]       = useState("");
+  const [csvHeaders, setCsvHeaders]         = useState([]);
   const [message, setMessage]               = useState("");
   const [delay, setDelay]                   = useState(5);
   const [sending, setSending]               = useState(false);
   const [logs, setLogs]                     = useState([]);
   const [sessions, setSessions]             = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
+  const [drag, setDrag]                     = useState(false);
   const cancelRef = useRef(false);
   const logsRef   = useRef([]);
   const endRef    = useRef(null);
+  const fileRef   = useRef(null);
 
-  const parsedNums  = numbersRaw ? parseNumbers(numbersRaw) : [];
+  const parsedNums  = inputMode==="csv"
+    ? csvRows.map(r=>r.number)
+    : (numbersRaw ? parseNumbers(numbersRaw) : []);
   const sentCount   = logs.filter(l=>l.status==="sent").length;
   const failedCount = logs.filter(l=>l.status==="failed").length;
   const doneCount   = logs.filter(l=>l.status!=="sending").length;
@@ -384,21 +444,40 @@ export default function App() {
     setSelectedSession(null);
   };
 
+  const handleCSV = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const rows = parseCSV(e.target.result);
+      if (rows.length === 0) { alert("CSV mein 'number'/'phone' column nahi mila ya data nahi hai"); return; }
+      setCsvRows(rows);
+      setCsvFileName(file.name);
+      const hdrs = Object.keys(rows[0]).filter(k => k !== "number");
+      setCsvHeaders(hdrs);
+    };
+    reader.readAsText(file);
+  };
+
   const handleSend = async () => {
     if(!parsedNums.length||!message.trim()) return;
     setSending(true); cancelRef.current=false;
     setLogs([]); logsRef.current=[];
     const nums=[...parsedNums]; const msg=message;
+    const rows = inputMode==="csv" ? [...csvRows] : null;
 
     for(let i=0;i<nums.length;i++){
       if(cancelRef.current) break;
       addLog(nums[i],i+1,"sending");
-      await new Promise(r=>setTimeout(r,delay*1000));
+      // Random delay: delay ± 30%
+      const jitter = delay * 0.3;
+      const actualDelay = delay + (Math.random()*jitter*2 - jitter);
+      await new Promise(r=>setTimeout(r, actualDelay*1000));
       try {
+        const finalMsg = rows ? applyVars(msg, rows[i]) : msg;
         const res = await fetch(`${BACKEND_URL}/api/send`,{
           method:"POST",
           headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({to:nums[i],message:msg})
+          body:JSON.stringify({to:nums[i],message:finalMsg})
         });
         const data = await res.json();
         addLog(nums[i],i+1, data.success ? "sent" : "failed");
@@ -501,48 +580,154 @@ export default function App() {
 
         {activeTab==="compose" && (
           <div className="fade-in" style={{ display:"flex", flexDirection:"column", gap:"20px" }}>
+
+            {/* ── INPUT MODE TOGGLE ── */}
             <div>
-              <label style={{ display:"block", fontSize:"12px", fontWeight:500, color:"var(--muted)", marginBottom:"8px" }}>PHONE NUMBERS</label>
-              <textarea className="field" value={numbersRaw} onChange={e=>setNumbersRaw(e.target.value)}
-                placeholder={"9876543210\n9123456789, 8001234567"} rows={4}
-                style={{ resize:"vertical", lineHeight:1.7, fontFamily:"var(--mono)", fontSize:"13px" }}
-              />
-              {parsedNums.length>0 && (
-                <div style={{ marginTop:"10px" }}>
-                  <span style={{ fontSize:"11px", color:"var(--green)" }}>✓ {parsedNums.length} number{parsedNums.length>1?"s":""} detected</span>
-                  <div style={{ marginTop:"8px", display:"flex", flexWrap:"wrap", gap:"5px" }}>
-                    {parsedNums.map((n,i)=>(
-                      <span key={i} className="tag" style={{ background:"var(--green-bg)", border:"1px solid rgba(63,185,80,.25)", color:"var(--green)" }}>+{n}</span>
-                    ))}
+              <label style={{ display:"block", fontSize:"12px", fontWeight:500, color:"var(--muted)", marginBottom:"8px" }}>NUMBER INPUT MODE</label>
+              <div className="mode-toggle">
+                <button className={inputMode==="custom"?"active":""} onClick={()=>setInputMode("custom")}>
+                  {Icon.edit} Manual / Custom
+                </button>
+                <button className={inputMode==="csv"?"active":""} onClick={()=>setInputMode("csv")}>
+                  {Icon.upload} CSV Upload
+                </button>
+              </div>
+            </div>
+
+            {/* ── CUSTOM MODE ── */}
+            {inputMode==="custom" && (
+              <div className="slide-up">
+                <label style={{ display:"block", fontSize:"12px", fontWeight:500, color:"var(--muted)", marginBottom:"8px" }}>PHONE NUMBERS</label>
+                <textarea className="field" value={numbersRaw} onChange={e=>setNumbersRaw(e.target.value)}
+                  placeholder={"9876543210\n9123456789, 8001234567"} rows={4}
+                  style={{ resize:"vertical", lineHeight:1.7, fontFamily:"var(--mono)", fontSize:"13px" }}
+                />
+                {parsedNums.length>0 && (
+                  <div style={{ marginTop:"10px" }}>
+                    <span style={{ fontSize:"11px", color:"var(--green)" }}>✓ {parsedNums.length} number{parsedNums.length>1?"s":""} detected</span>
+                    <div style={{ marginTop:"8px", display:"flex", flexWrap:"wrap", gap:"5px" }}>
+                      {parsedNums.slice(0,20).map((n,i)=>(
+                        <span key={i} className="tag" style={{ background:"var(--green-bg)", border:"1px solid rgba(63,185,80,.25)", color:"var(--green)" }}>+{n}</span>
+                      ))}
+                      {parsedNums.length>20 && <span className="tag" style={{ background:"var(--surface)", border:"1px solid var(--border2)", color:"var(--muted)" }}>+{parsedNums.length-20} more</span>}
+                    </div>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* ── CSV MODE ── */}
+            {inputMode==="csv" && (
+              <div className="slide-up">
+                <label style={{ display:"block", fontSize:"12px", fontWeight:500, color:"var(--muted)", marginBottom:"8px" }}>CSV FILE</label>
+
+                {!csvRows.length ? (
+                  <label
+                    className={`upload-zone${drag?" drag":""}`}
+                    onDragOver={e=>{e.preventDefault();setDrag(true);}}
+                    onDragLeave={()=>setDrag(false)}
+                    onDrop={e=>{e.preventDefault();setDrag(false);handleCSV(e.dataTransfer.files[0]);}}
+                  >
+                    <input type="file" accept=".csv" ref={fileRef} onChange={e=>handleCSV(e.target.files[0])}/>
+                    <span style={{fontSize:24}}>{Icon.upload}</span>
+                    <span style={{fontWeight:500}}>CSV file drag karo ya click karo</span>
+                    <span style={{fontSize:"11px", color:"var(--muted)"}}>Column chahiye: <code style={{background:"var(--surface)",padding:"1px 5px",borderRadius:4,fontSize:11}}>number</code> (baaki optional: name, city, etc.)</span>
+                  </label>
+                ) : (
+                  <div style={{ background:"var(--bg)", border:"1px solid var(--border2)", borderRadius:10, padding:"12px 14px" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <span style={{fontSize:18}}>📄</span>
+                        <div>
+                          <div style={{fontSize:13, color:"var(--text)", fontWeight:500}}>{csvFileName}</div>
+                          <div style={{fontSize:11, color:"var(--green)"}}>✓ {csvRows.length} contacts loaded</div>
+                        </div>
+                      </div>
+                      <button className="btn-ghost" style={{color:"var(--red)", borderColor:"rgba(248,81,73,.3)"}}
+                        onClick={()=>{setCsvRows([]);setCsvFileName("");setCsvHeaders([]);if(fileRef.current)fileRef.current.value="";}}>
+                        {Icon.trash} Clear
+                      </button>
+                    </div>
+                    {csvHeaders.length>0 && (
+                      <div style={{marginTop:10, display:"flex", flexWrap:"wrap", gap:5}}>
+                        <span style={{fontSize:11, color:"var(--muted)", marginRight:4}}>Columns:</span>
+                        {["number",...csvHeaders].map(h=>(
+                          <span key={h} className="tag" style={{background:"var(--surface)", border:"1px solid var(--border2)", color:"var(--muted)"}}>
+                            {"{"+h+"}"}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {/* Preview first 3 rows */}
+                    <div style={{marginTop:10, borderTop:"1px solid var(--border)", paddingTop:8}}>
+                      <div style={{fontSize:11, color:"var(--muted)", marginBottom:5}}>Preview:</div>
+                      {csvRows.slice(0,3).map((r,i)=>(
+                        <div key={i} style={{fontSize:11, fontFamily:"var(--mono)", color:"var(--text)", padding:"3px 0"}}>
+                          {fmt(r.number)}{csvHeaders.length>0 ? " · "+csvHeaders.map(h=>`${h}: ${r[h]}`).join(", ") : ""}
+                        </div>
+                      ))}
+                      {csvRows.length>3 && <div style={{fontSize:11,color:"var(--muted)"}}>...aur {csvRows.length-3} contacts</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── MESSAGE ── */}
+            <div>
+              <label style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:"12px", fontWeight:500, color:"var(--muted)", marginBottom:"8px" }}>
+                <span>MESSAGE</span>
+                <span style={{ fontFamily:"var(--mono)" }}>{message.length} chars</span>
+              </label>
+              <textarea className="field" value={message} onChange={e=>setMessage(e.target.value)}
+                placeholder={inputMode==="csv" && csvHeaders.length>0
+                  ? `Namsate {name}, aapka order {city} se dispatch ho gaya!`
+                  : "Apna message yahan likho..."}
+                rows={6}
+                style={{ resize:"vertical", lineHeight:1.75, fontSize:"14px" }}
+              />
+              {inputMode==="csv" && csvHeaders.length>0 && (
+                <div style={{marginTop:6, display:"flex", flexWrap:"wrap", gap:5, alignItems:"center"}}>
+                  <span style={{fontSize:11, color:"var(--muted)"}}>Variables use karo:</span>
+                  {csvHeaders.map(h=>(
+                    <button key={h} onClick={()=>setMessage(m=>m+`{${h}}`)}
+                      className="tag" style={{
+                        background:"var(--surface)", border:"1px solid var(--border2)",
+                        color:"var(--blue)", cursor:"pointer", fontSize:11,
+                        transition:"border-color .15s",
+                      }}>
+                      +{"{"+h+"}"}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
 
+            {/* ── DELAY SLIDER ── */}
             <div>
-              <label style={{ display:"flex", justifyContent:"space-between", fontSize:"12px", fontWeight:500, color:"var(--muted)", marginBottom:"8px" }}>
-                <span>MESSAGE</span><span style={{ fontFamily:"var(--mono)" }}>{message.length}</span>
-              </label>
-              <textarea className="field" value={message} onChange={e=>setMessage(e.target.value)}
-                placeholder="Apna message yahan likho..." rows={6}
-                style={{ resize:"vertical", lineHeight:1.75, fontSize:"14px" }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display:"flex", justifyContent:"space-between", fontSize:"12px", fontWeight:500, color:"var(--muted)", marginBottom:"8px" }}>
-                <span>DELAY</span><span style={{ fontFamily:"var(--mono)", color:"var(--text)" }}>{delay}s</span>
+              <label style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:"12px", fontWeight:500, color:"var(--muted)", marginBottom:"8px" }}>
+                <span>DELAY BETWEEN MESSAGES</span>
+                <span style={{ fontFamily:"var(--mono)", color:"var(--text)", background:"var(--surface)", border:"1px solid var(--border2)", padding:"2px 8px", borderRadius:6, fontSize:12 }}>
+                  ~{delay}s <span style={{color:"var(--muted)", fontWeight:400}}>(±30% random)</span>
+                </span>
               </label>
               <input type="range" min={1} max={30} value={delay} onChange={e=>setDelay(Number(e.target.value))}
                 style={{ width:"100%", accentColor:"var(--green)", cursor:"pointer", height:"4px" }}
               />
-              <div style={{ display:"flex", justifyContent:"space-between", fontSize:"11px", color:"var(--muted)", marginTop:"5px" }}>
-                <span>1s · risky</span><span>10s · safe</span><span>30s · safest</span>
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:"11px", color:"var(--muted)", marginTop:"6px" }}>
+                <span style={{color: delay<=3 ? "var(--red)" : "var(--muted)"}}>1s · ban risk ⚠️</span>
+                <span style={{color: delay>=8 && delay<=15 ? "var(--green)" : "var(--muted)"}}>8–15s · safe ✓</span>
+                <span>30s · safest</span>
               </div>
+              {delay <= 3 && (
+                <div style={{marginTop:8, fontSize:12, color:"var(--red)", background:"rgba(248,81,73,.08)", border:"1px solid rgba(248,81,73,.2)", borderRadius:7, padding:"7px 12px"}}>
+                  ⚠️ Bahut kam delay hai — WhatsApp ban kar sakta hai
+                </div>
+              )}
             </div>
 
             <button className="btn-primary" onClick={handleSend} disabled={!parsedNums.length||!message.trim()||sending}>
-              {Icon.send} Send to {parsedNums.length} Number{parsedNums.length!==1?"s":""}
+              {Icon.send} Send to {parsedNums.length} Contact{parsedNums.length!==1?"s":""}
             </button>
 
             {logs.length>0 && (
