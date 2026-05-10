@@ -426,6 +426,7 @@ function LoginScreen({ onLogin }) {
 export default function App() {
   const [loggedIn, setLoggedIn]             = useState(false);
   const [connectedPhone, setConnectedPhone] = useState("");
+  const [checking, setChecking]             = useState(true); // startup check
   const [activeTab, setActiveTab]           = useState("compose");
   const [inputMode, setInputMode]           = useState("custom"); // "custom" | "csv"
   const [numbersRaw, setNumbersRaw]         = useState("");
@@ -454,6 +455,21 @@ export default function App() {
 
   useEffect(()=>{ logsRef.current = logs; },[logs]);
   useEffect(()=>{ if(sending) endRef.current?.scrollIntoView({behavior:"smooth"}); },[logs,sending]);
+
+  // App load hote hi check karo — already connected hai?
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/status`);
+        const data = await res.json();
+        if (data.connected) {
+          setConnectedPhone(data.phone || "");
+          setLoggedIn(true);
+        }
+      } catch {}
+      setChecking(false);
+    })();
+  }, []);
 
   const addLog = (num,idx,status) => {
     setLogs(prev=>{
@@ -521,6 +537,15 @@ export default function App() {
     try { await fetch(`${BACKEND_URL}/api/logout`,{method:"POST"}); } catch {}
     setLoggedIn(false); setSending(false); cancelRef.current=true;
   };
+
+  if(checking) return (
+    <div style={{ minHeight:"100vh", background:"var(--bg)", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:14, fontFamily:"var(--font)" }}>
+      <style>{CSS}</style>
+      <div style={{ color:"var(--green)" }}>{Icon.whatsapp}</div>
+      <span className="spin" style={{ color:"var(--green)", fontSize:20 }}>{Icon.refresh}</span>
+      <span style={{ fontSize:12, color:"var(--muted)", fontFamily:"var(--mono)" }}>Checking session...</span>
+    </div>
+  );
 
   if(!loggedIn) return <LoginScreen onLogin={(ph)=>{ setConnectedPhone(ph); setLoggedIn(true); }}/>;
 
