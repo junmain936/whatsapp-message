@@ -212,11 +212,24 @@ app.post("/api/request-code", async (req, res) => {
 
   initClient();
 
-  // Client ready hone ka wait karo
+  // Browser + pupPage fully ready hone ka wait karo (max 60 sec)
   let waited = 0;
-  while (clientStatus === "initializing" && waited < 15000) {
-    await new Promise((r) => setTimeout(r, 500));
-    waited += 500;
+  const MAX_WAIT = 60000;
+  while (waited < MAX_WAIT) {
+    await new Promise((r) => setTimeout(r, 1000));
+    waited += 1000;
+
+    // pupPage ready ho gaya toh aage badho
+    if (waClient && waClient.pupPage && !waClient.pupPage.isClosed()) {
+      break;
+    }
+  }
+
+  // Agar phir bhi ready nahi hua toh error return karo
+  if (!waClient || !waClient.pupPage || waClient.pupPage.isClosed()) {
+    return res.status(500).json({
+      error: "Browser ready nahi hua, 30 sec baad dobara try karo",
+    });
   }
 
   try {
