@@ -114,6 +114,7 @@ function initClient() {
     }),
     puppeteer: {
       headless: true,
+      executablePath: process.env.CHROME_PATH || "/usr/bin/google-chrome-stable",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
