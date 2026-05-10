@@ -7,7 +7,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const BACKEND_URL = "https://your-backend.onrender.com"; // <-- apna URL yahan
+const BACKEND_URL = "https://whatsapp-2q0q.onrender.com/"; // <-- apna URL yahan
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function parseNumbers(raw) {
