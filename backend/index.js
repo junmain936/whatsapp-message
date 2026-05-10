@@ -1,13 +1,13 @@
 /**
  * WA Sender — Backend
  * Stack: Node.js + Express + whatsapp-web.js + Supabase Session
- * Deploy: Render.com (Free tier, no disk needed!)
+ * Deploy: Railway.app
  *
- * Environment Variables (Render pe set karo):
+ * Environment Variables:
  *   SUPABASE_URL   = https://xxxx.supabase.co
  *   SUPABASE_KEY   = your-service-role-key
- *   SUPABASE_BUCKET= wa-session  (Storage bucket naam)
- *   PORT           = 3001 (optional, Render auto set karta hai)
+ *   SUPABASE_BUCKET= wa-session
+ *   PORT           = (auto set by Railway)
  */
 
 const express = require("express");
@@ -31,9 +31,7 @@ const supabase = createClient(
 );
 const BUCKET = process.env.SUPABASE_BUCKET || "wa-session";
 
-// ─── SUPABASE STORE (RemoteAuth ke liye) ─────────────────────────────────────
-// whatsapp-web.js RemoteAuth ek custom store accept karta hai
-// Hum Supabase Storage ko store ki tarah use karenge
+// ─── SUPABASE STORE ───────────────────────────────────────────────────────────
 class SupabaseStore {
   async sessionExists({ session }) {
     const { data } = await supabase.storage
@@ -43,7 +41,6 @@ class SupabaseStore {
   }
 
   async save({ session }) {
-    // whatsapp-web.js RemoteAuth session zip banata hai .wwebjs_auth/<session>.zip
     const zipPath = path.join(
       process.cwd(),
       `.wwebjs_auth`,
@@ -73,7 +70,6 @@ class SupabaseStore {
       return;
     }
 
-    // Zip ko local mein extract karo
     const authDir = path.join(process.cwd(), `.wwebjs_auth`);
     if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
 
@@ -98,6 +94,26 @@ let clientStatus   = "disconnected";
 let currentQR      = null;
 let connectedPhone = "";
 
+// ─── CHROME PATH DETECT ───────────────────────────────────────────────────────
+function getChromePath() {
+  const paths = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/snap/bin/chromium",
+  ];
+  for (const p of paths) {
+    if (p && fs.existsSync(p)) {
+      console.log("[Chrome] Found at:", p);
+      return p;
+    }
+  }
+  console.log("[Chrome] Using puppeteer bundled chrome");
+  return undefined;
+}
+
 // ─── WA CLIENT INIT ───────────────────────────────────────────────────────────
 function initClient() {
   if (waClient) {
@@ -106,15 +122,18 @@ function initClient() {
 
   clientStatus = "initializing";
   currentQR    = null;
+  waClient     = null;
 
-  waClient = new Client({
+  const chromePath = getChromePath();
+
+  const client = new Client({
     authStrategy: new RemoteAuth({
-      store:        new SupabaseStore(),
-      backupSyncIntervalMs: 60000, // Har 1 min mein Supabase sync
+      store: new SupabaseStore(),
+      backupSyncIntervalMs: 60000,
     }),
     puppeteer: {
       headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      executablePath: chromePath,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -133,56 +152,51 @@ function initClient() {
     },
   });
 
-  // QR event
-  waClient.on("qr", async (qr) => {
+  client.on("qr", async (qr) => {
     clientStatus = "qr_ready";
     try { currentQR = await qrcode.toDataURL(qr); } catch {}
     console.log("[WA] QR ready");
   });
 
-  // Ready
-  waClient.on("ready", () => {
+  client.on("ready", () => {
     clientStatus   = "connected";
     currentQR      = null;
-    connectedPhone = waClient.info?.wid?.user || "";
+    connectedPhone = client.info?.wid?.user || "";
     console.log("[WA] Connected:", connectedPhone);
   });
 
-  // Remote session saved to Supabase
-  waClient.on("remote_session_saved", () => {
+  client.on("remote_session_saved", () => {
     console.log("[WA] Session synced to Supabase ✓");
   });
 
-  // Auth failure
-  waClient.on("auth_failure", (msg) => {
+  client.on("auth_failure", (msg) => {
     clientStatus = "disconnected";
     console.error("[WA] Auth failed:", msg);
   });
 
-  // Disconnected
-  waClient.on("disconnected", (reason) => {
+  client.on("disconnected", (reason) => {
     clientStatus   = "disconnected";
     connectedPhone = "";
     console.log("[WA] Disconnected:", reason);
   });
 
-  waClient.initialize().catch((err) => {
+  client.initialize().catch((err) => {
     clientStatus = "disconnected";
     console.error("[WA] Init error:", err.message);
   });
+
+  waClient = client;
 }
 
-// Server start pe auto-init (session Supabase se load hogi)
+// Server start pe auto-init
 initClient();
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
-// Health / ping
 app.get("/", (req, res) => {
   res.json({ status: "ok", service: "WA Sender Backend" });
 });
 
-// Status
 app.get("/api/status", (req, res) => {
   res.json({
     connected: clientStatus === "connected",
@@ -192,7 +206,6 @@ app.get("/api/status", (req, res) => {
   });
 });
 
-// QR image
 app.get("/api/qr", (req, res) => {
   if (!currentQR) {
     return res.status(404).json({ error: "QR abhi ready nahi, thoda wait karo" });
@@ -213,11 +226,22 @@ app.post("/api/request-code", async (req, res) => {
 
   initClient();
 
-  // Client ready hone ka wait karo
+  // pupPage ready hone ka wait karo (max 60 sec)
   let waited = 0;
-  while (clientStatus === "initializing" && waited < 15000) {
-    await new Promise((r) => setTimeout(r, 500));
-    waited += 500;
+  while (waited < 60000) {
+    await new Promise((r) => setTimeout(r, 1000));
+    waited += 1000;
+
+    if (waClient && waClient.pupPage && !waClient.pupPage.isClosed()) {
+      console.log("[WA] pupPage ready after", waited, "ms");
+      break;
+    }
+  }
+
+  if (!waClient || !waClient.pupPage || waClient.pupPage.isClosed()) {
+    return res.status(500).json({
+      error: "Browser ready nahi hua, thoda wait karke dobara try karo",
+    });
   }
 
   try {
@@ -262,19 +286,19 @@ app.post("/api/send", async (req, res) => {
   }
 });
 
-// Logout + Supabase session delete
+// Logout
 app.post("/api/logout", async (req, res) => {
   try {
     if (waClient) {
       await waClient.logout();
       await waClient.destroy();
     }
-    // Supabase se bhi session hatao
     await supabase.storage.from(BUCKET).remove(["RemoteAuth.zip"]);
 
     clientStatus   = "disconnected";
     connectedPhone = "";
     currentQR      = null;
+    waClient       = null;
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -291,4 +315,5 @@ app.post("/api/reinit", (req, res) => {
 app.listen(PORT, () => {
   console.log(`[Server] Port ${PORT} pe chal raha hai`);
   console.log(`[Supabase] Bucket: ${BUCKET}`);
+  console.log(`[Chrome] Path: ${getChromePath() || "puppeteer bundled"}`);
 });
