@@ -3,20 +3,11 @@ services:
     name: wa-sender-backend
     runtime: node
     rootDir: backend
-    buildCommand: |
-      npm install &&
-      apt-get update -y &&
-      apt-get install -y wget gnupg &&
-      wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - &&
-      echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list &&
-      apt-get update -y &&
-      apt-get install -y google-chrome-stable --no-install-recommends
+    buildCommand: npm install && npx puppeteer browsers install chrome
     startCommand: node index.js
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PUPPETEER_SKIP_DOWNLOAD
-        value: "true"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
