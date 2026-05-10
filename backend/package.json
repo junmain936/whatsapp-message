@@ -1,25 +1,5 @@
 {
-  "name": "wa-sender-backend",
-  "version": "1.0.0",
-  "description": "WhatsApp Bulk Sender Backend",
-  "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "postinstall": "npx puppeteer browsers install chrome"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "qrcode": "^1.5.3",
-    "puppeteer": "^21.0.0",
-    "whatsapp-web.js": "^1.23.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "start": "node index.js"
   }
 }
