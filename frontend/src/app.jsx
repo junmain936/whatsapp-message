@@ -125,16 +125,8 @@ const QR_EXPIRE = 60;
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [mode, setMode]             = useState("qr");
-  const [phone, setPhone]           = useState("");
-  const [pairingCode, setPairingCode] = useState("");
-  const [step, setStep]             = useState(1);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState("");
-  const [copied, setCopied]         = useState(false);
-
-  // QR state
-  const [qrImage, setQrImage]       = useState(null);  // base64 data URL
+  // QR state only
+  const [qrImage, setQrImage]       = useState(null);
   const [qrLoading, setQrLoading]   = useState(false);
   const [qrError, setQrError]       = useState("");
   const [qrTimer, setQrTimer]       = useState(QR_EXPIRE);
@@ -144,8 +136,6 @@ function LoginScreen({ onLogin }) {
   const timerRef       = useRef(null);
   const qrPollRef      = useRef(null);
   const qrInitialized  = useRef(false);
-
-  const cleanPhone = phone.replace(/\D/g,"");
 
   // Auth status poll
   const startPolling = useCallback(() => {
@@ -159,11 +149,11 @@ function LoginScreen({ onLogin }) {
           clearInterval(timerRef.current);
           clearInterval(qrPollRef.current);
           qrInitialized.current = false;
-          onLogin(data.phone || cleanPhone);
+          onLogin(data.phone || "");
         }
       } catch {}
     }, 2000);
-  }, [cleanPhone, onLogin]);
+  }, [onLogin]);
 
   useEffect(() => () => {
     clearInterval(pollRef.current);
@@ -225,49 +215,16 @@ function LoginScreen({ onLogin }) {
     }
   }, [startPolling]);
 
-  // QR mode pe aane pe auto fetch (sirf ek baar)
+  // Component mount pe auto fetch
   useEffect(() => {
-    if (mode === "qr") {
-      qrInitialized.current = false;
-      fetchQR();
-    }
+    qrInitialized.current = false;
+    fetchQR();
     return () => {
       clearInterval(timerRef.current);
       clearInterval(pollRef.current);
       qrInitialized.current = false;
     };
-  }, [mode]);
-
-  // ── PAIRING CODE ──
-  const handleRequestCode = async () => {
-    if (cleanPhone.length < 10) return;
-    setLoading(true); setError("");
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/request-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: cleanPhone.startsWith("91") ? cleanPhone : `91${cleanPhone}` }),
-      });
-      const data = await res.json();
-      if (data.code) {
-        setPairingCode(data.code);
-        setStep(2);
-        startPolling();
-      } else {
-        setError(data.error || "Code nahi mila, retry karo");
-      }
-    } catch {
-      setError("Backend se connect nahi ho paya");
-    }
-    setLoading(false);
-  };
-
-  const copyCode = () => {
-    navigator.clipboard.writeText(pairingCode);
-    setCopied(true); setTimeout(() => setCopied(false), 1800);
-  };
-
-  const formatCode = (c) => c ? `${c.slice(0,4)}-${c.slice(4,8)}` : "";
+  }, []);
 
   // Timer color
   const timerColor = qrTimer > 30 ? "var(--green)" : qrTimer > 10 ? "var(--amber)" : "var(--red)";
@@ -280,7 +237,7 @@ function LoginScreen({ onLogin }) {
     }}>
       <style>{CSS}</style>
 
-      <div className="fade-in" style={{ width:"100%", maxWidth:"400px" }}>
+      <div className="fade-in" style={{ width:"100%", maxWidth:"380px" }}>
 
         {/* Logo */}
         <div style={{ textAlign:"center", marginBottom:"32px" }}>
@@ -291,197 +248,90 @@ function LoginScreen({ onLogin }) {
             boxShadow:"0 0 0 8px rgba(63,185,80,.08), 0 0 0 16px rgba(63,185,80,.04)",
           }}>{Icon.whatsapp}</div>
           <h1 style={{ fontSize:"22px", fontWeight:600, color:"var(--text)", letterSpacing:"-0.5px" }}>WhatsApp Sender</h1>
-          <p style={{ color:"var(--muted)", fontSize:"13px", marginTop:"4px" }}>Login karke shuru karo</p>
+          <p style={{ color:"var(--muted)", fontSize:"13px", marginTop:"4px" }}>QR scan karke login karo</p>
         </div>
 
         {/* Card */}
         <div style={{
           background:"var(--surface)", border:"1px solid var(--border)",
-          borderRadius:"14px", overflow:"hidden",
+          borderRadius:"14px", padding:"28px 24px",
+          textAlign:"center",
         }}>
-          {/* Tabs */}
-          <div style={{ display:"flex", borderBottom:"1px solid var(--border)" }}>
-            {[["code","Phone Number"],["qr","QR Code"]].map(([m,label])=>(
-              <button key={m} onClick={()=>{
-                setMode(m); setStep(1); setError("");
-                setPairingCode(""); setQrImage(null);
-                setQrExpired(false); setQrError("");
-                qrInitialized.current = false;
-                clearInterval(pollRef.current);
-                clearInterval(timerRef.current);
-              }}
-                style={{
-                  flex:1, padding:"13px",
-                  background: mode===m ? "rgba(63,185,80,.06)" : "none",
-                  border:"none",
-                  borderBottom: mode===m ? "2px solid var(--green)" : "2px solid transparent",
-                  color: mode===m ? "var(--green)" : "var(--muted)",
-                  fontSize:"13px", fontWeight: mode===m ? 600 : 400,
-                  cursor:"pointer", transition:"all .15s", fontFamily:"var(--font)",
-                }}
-              >{label}</button>
-            ))}
-          </div>
+          <p style={{ fontSize:"13px", color:"var(--muted)", marginBottom:"20px", lineHeight:1.7 }}>
+            WhatsApp → <strong style={{color:"var(--text)"}}>Settings → Linked Devices → Link a Device</strong> → Camera se scan karo
+          </p>
 
-          <div style={{ padding:"24px" }}>
-
-            {/* ── QR MODE ── */}
-            {mode === "qr" && (
-              <div className="slide-up" style={{ textAlign:"center" }}>
-                <p style={{ fontSize:"13px", color:"var(--muted)", marginBottom:"16px", lineHeight:1.6 }}>
-                  WhatsApp → Settings → Linked Devices → Link a Device → Camera se scan karo
-                </p>
-
-                {/* QR Box */}
-                <div style={{
-                  display:"inline-flex", alignItems:"center", justifyContent:"center",
-                  padding:"12px", background:"#fff", borderRadius:"12px",
-                  border:"1px solid var(--border)",
-                  width:204, height:204, position:"relative",
-                }}>
-                  {qrLoading && (
-                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
-                      <span className="spin" style={{ color:"#25d366", fontSize:28 }}>{Icon.refresh}</span>
-                      <span style={{ fontSize:11, color:"#555", fontFamily:"var(--mono)" }}>QR load ho raha hai...</span>
-                    </div>
-                  )}
-
-                  {qrImage && !qrExpired && (
-                    <img src={qrImage} alt="QR Code"
-                      style={{ width:180, height:180, display:"block", imageRendering:"pixelated" }}
-                    />
-                  )}
-
-                  {qrExpired && (
-                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
-                      <span style={{ fontSize:32 }}>⏰</span>
-                      <span style={{ fontSize:12, color:"#555", fontWeight:600 }}>QR Expire Ho Gaya</span>
-                    </div>
-                  )}
-
-                  {qrError && !qrLoading && (
-                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8, padding:10 }}>
-                      <span style={{ fontSize:28 }}>❌</span>
-                      <span style={{ fontSize:11, color:"#f85149", textAlign:"center" }}>{qrError}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Timer */}
-                {qrImage && !qrExpired && (
-                  <div style={{
-                    marginTop:12, display:"flex", alignItems:"center",
-                    justifyContent:"center", gap:6,
-                  }}>
-                    <span style={{ fontSize:12, color:"var(--muted)" }}>Expire hoga:</span>
-                    <span style={{
-                      fontSize:14, fontWeight:700, fontFamily:"var(--mono)",
-                      color: timerColor,
-                    }}>{qrTimer}s</span>
-                    {/* Progress arc */}
-                    <svg width="16" height="16" viewBox="0 0 16 16">
-                      <circle cx="8" cy="8" r="6" fill="none" stroke="var(--border2)" strokeWidth="2"/>
-                      <circle cx="8" cy="8" r="6" fill="none" stroke={timerColor} strokeWidth="2"
-                        strokeDasharray={`${(qrTimer/QR_EXPIRE)*37.7} 37.7`}
-                        strokeLinecap="round"
-                        style={{ transform:"rotate(-90deg)", transformOrigin:"8px 8px", transition:"stroke-dasharray 1s linear" }}
-                      />
-                    </svg>
-                  </div>
-                )}
-
-                {/* Refresh button */}
-                {(qrExpired || qrError) && (
-                  <button className="btn-primary" onClick={()=>{ qrInitialized.current=false; fetchQR(); }} style={{ marginTop:16 }}>
-                    <span>{Icon.refresh}</span> Naya QR Generate Karo
-                  </button>
-                )}
-
-                {qrImage && !qrExpired && (
-                  <button className="btn-ghost" onClick={()=>{ qrInitialized.current=false; fetchQR(); }} style={{ margin:"12px auto 0", width:"auto" }}>
-                    {Icon.refresh} Refresh QR
-                  </button>
-                )}
+          {/* QR Box */}
+          <div style={{
+            display:"inline-flex", alignItems:"center", justifyContent:"center",
+            padding:"12px", background:"#fff", borderRadius:"12px",
+            border:"1px solid var(--border)",
+            width:210, height:210,
+          }}>
+            {qrLoading && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+                <span className="spin" style={{ color:"#25d366", fontSize:28 }}>{Icon.refresh}</span>
+                <span style={{ fontSize:11, color:"#555", fontFamily:"var(--mono)" }}>QR load ho raha hai...</span>
               </div>
             )}
 
-            {/* ── PHONE CODE MODE ── */}
-            {mode === "code" && (
-              <div>
-                {step === 1 && (
-                  <div className="slide-up">
-                    <p style={{ fontSize:"13px", color:"var(--muted)", marginBottom:"16px", lineHeight:1.6 }}>
-                      Apna WhatsApp number dalo. Ek pairing code milega jo WhatsApp pe enter karna hoga.
-                    </p>
-                    <div style={{ position:"relative", marginBottom:"12px" }}>
-                      <span style={{
-                        position:"absolute", left:"12px", top:"50%", transform:"translateY(-50%)",
-                        color:"var(--muted)", fontSize:"13px", fontFamily:"var(--mono)",
-                      }}>+91</span>
-                      <input className="field" type="tel" value={phone}
-                        onChange={e=>setPhone(e.target.value)}
-                        onKeyDown={e=>e.key==="Enter"&&handleRequestCode()}
-                        placeholder="9876543210"
-                        style={{ paddingLeft:"44px", fontFamily:"var(--mono)" }}
-                      />
-                    </div>
-                    {error && <p style={{fontSize:"12px",color:"var(--red)",marginBottom:"12px"}}>{error}</p>}
-                    <button className="btn-primary" onClick={handleRequestCode}
-                      disabled={cleanPhone.length<10||loading}>
-                      {loading ? <span className="spin">{Icon.refresh}</span> : Icon.phone}
-                      {loading ? "Code Maang Rahe Hain..." : "Code Lo"}
-                    </button>
-                  </div>
-                )}
+            {qrImage && !qrExpired && (
+              <img src={qrImage} alt="QR Code"
+                style={{ width:186, height:186, display:"block", imageRendering:"pixelated" }}
+              />
+            )}
 
-                {step === 2 && (
-                  <div className="slide-up" style={{ textAlign:"center" }}>
-                    <div style={{
-                      width:40,height:40,background:"var(--green-bg)",borderRadius:"10px",
-                      display:"flex",alignItems:"center",justifyContent:"center",
-                      margin:"0 auto 12px",fontSize:"20px",
-                    }}>🔑</div>
-                    <p style={{ fontSize:"13px", color:"var(--muted)", marginBottom:"16px", lineHeight:1.6 }}>
-                      WhatsApp → <strong style={{color:"var(--text)"}}>Settings → Linked Devices → Link a Device → Link with phone number</strong> → yeh code enter karo:
-                    </p>
+            {qrExpired && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:36 }}>⏰</span>
+                <span style={{ fontSize:12, color:"#555", fontWeight:600 }}>QR Expire Ho Gaya</span>
+              </div>
+            )}
 
-                    <div style={{
-                      background:"var(--bg)", border:"1px solid var(--border2)",
-                      borderRadius:"10px", padding:"18px 20px", marginBottom:"14px",
-                      position:"relative",
-                    }}>
-                      <div style={{
-                        fontSize:"28px", fontWeight:500, fontFamily:"var(--mono)",
-                        color:"var(--green)", letterSpacing:"6px",
-                      }}>
-                        {formatCode(pairingCode) || <span className="pulse" style={{color:"var(--muted)"}}>••••-••••</span>}
-                      </div>
-                      {pairingCode && (
-                        <button onClick={copyCode} style={{
-                          position:"absolute", top:"10px", right:"10px",
-                          background:"none", border:"none",
-                          color: copied ? "var(--green)" : "var(--muted)",
-                          cursor:"pointer", display:"flex", alignItems:"center", gap:"4px",
-                          fontSize:"11px", transition:"color .15s",
-                        }}>
-                          {copied ? Icon.check : Icon.copy} {copied?"Copied!":"Copy"}
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="pulse" style={{fontSize:"12px",color:"var(--amber)",marginBottom:"16px",display:"flex",alignItems:"center",gap:"6px",justifyContent:"center"}}>
-                      <span style={{width:6,height:6,background:"var(--amber)",borderRadius:"50%",display:"inline-block"}}/>
-                      WhatsApp confirm hone ka intezaar...
-                    </div>
-
-                    <button className="btn-ghost" onClick={()=>{setStep(1);clearInterval(pollRef.current);setPairingCode("");}}>
-                      ← Wapas
-                    </button>
-                  </div>
-                )}
+            {qrError && !qrLoading && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8, padding:10 }}>
+                <span style={{ fontSize:28 }}>❌</span>
+                <span style={{ fontSize:11, color:"#f85149", textAlign:"center" }}>{qrError}</span>
               </div>
             )}
           </div>
+
+          {/* Timer */}
+          {qrImage && !qrExpired && (
+            <div style={{ marginTop:14, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+              <span style={{ fontSize:12, color:"var(--muted)" }}>Expire hoga:</span>
+              <span style={{ fontSize:14, fontWeight:700, fontFamily:"var(--mono)", color: timerColor }}>{qrTimer}s</span>
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <circle cx="8" cy="8" r="6" fill="none" stroke="var(--border2)" strokeWidth="2"/>
+                <circle cx="8" cy="8" r="6" fill="none" stroke={timerColor} strokeWidth="2"
+                  strokeDasharray={`${(qrTimer/QR_EXPIRE)*37.7} 37.7`}
+                  strokeLinecap="round"
+                  style={{ transform:"rotate(-90deg)", transformOrigin:"8px 8px", transition:"stroke-dasharray 1s linear" }}
+                />
+              </svg>
+            </div>
+          )}
+
+          {/* Waiting indicator */}
+          {qrImage && !qrExpired && (
+            <div className="pulse" style={{ marginTop:12, fontSize:"12px", color:"var(--amber)", display:"flex", alignItems:"center", gap:6, justifyContent:"center" }}>
+              <span style={{ width:6, height:6, background:"var(--amber)", borderRadius:"50%", display:"inline-block" }}/>
+              Scan ka intezaar hai...
+            </div>
+          )}
+
+          {/* Refresh / Retry buttons */}
+          {(qrExpired || qrError) && (
+            <button className="btn-primary" onClick={()=>{ qrInitialized.current=false; fetchQR(); }} style={{ marginTop:18 }}>
+              <span>{Icon.refresh}</span> Naya QR Generate Karo
+            </button>
+          )}
+
+          {qrImage && !qrExpired && (
+            <button className="btn-ghost" onClick={()=>{ qrInitialized.current=false; fetchQR(); }} style={{ margin:"14px auto 0", width:"auto" }}>
+              {Icon.refresh} Refresh QR
+            </button>
+          )}
         </div>
 
         <p style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"var(--border2)" }}>
