@@ -178,11 +178,12 @@ const QR_EXPIRE = 60;
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
   // QR state only
-  const [qrImage, setQrImage]       = useState(null);
-  const [qrLoading, setQrLoading]   = useState(false);
-  const [qrError, setQrError]       = useState("");
-  const [qrTimer, setQrTimer]       = useState(QR_EXPIRE);
-  const [qrExpired, setQrExpired]   = useState(false);
+  const [qrImage, setQrImage]           = useState(null);
+  const [qrLoading, setQrLoading]       = useState(false);
+  const [qrError, setQrError]           = useState("");
+  const [qrTimer, setQrTimer]           = useState(QR_EXPIRE);
+  const [qrExpired, setQrExpired]       = useState(false);
+  const [backendStatus, setBackendStatus] = useState(""); // live status from backend
 
   const pollRef        = useRef(null);
   const timerRef       = useRef(null);
@@ -223,39 +224,63 @@ function LoginScreen({ onLogin }) {
     setQrError("");
     setQrExpired(false);
     setQrTimer(QR_EXPIRE);
+    setQrImage(null);
 
-    // Pehle reinit karo
-    try { await fetch(`${BACKEND_URL}/api/reinit`, { method: "POST" }); } catch {}
+    // ❌ reinit NAHI karenge — Chromium restart hoga toh aur time lagega
+    // Pehle check karo — already connected toh seedha login
+    try {
+      const chk = await fetch(`${BACKEND_URL}/api/status`);
+      const d = await chk.json();
+      if (d.connected) { onLogin(d.phone || ""); return; }
+    } catch {}
 
-    // QR ready hone ka wait karo (max 30s)
+    // QR ready hone ka wait karo (max 60s) — status bhi dikhate raho
+    const statusLabels = {
+      initializing: "WhatsApp browser start ho raha hai...",
+      qr_ready:     "QR ready hai, load ho raha hai...",
+      disconnected: "Connecting...",
+      "":           "Backend se connect ho raha hai...",
+    };
+
     let got = false;
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 60; i++) {
       await new Promise(r => setTimeout(r, 1000));
       try {
-        const res = await fetch(`${BACKEND_URL}/api/qr`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.qr) {
-            setQrImage(data.qr);
-            setQrLoading(false);
-            got = true;
+        // Status update karo (isse loading message meaningful hoga)
+        const stRes = await fetch(`${BACKEND_URL}/api/status`);
+        const stData = await stRes.json();
+        setBackendStatus(statusLabels[stData.status] || stData.status);
 
-            // Timer start karo
-            clearInterval(timerRef.current);
-            let t = QR_EXPIRE;
-            timerRef.current = setInterval(() => {
-              t--;
-              setQrTimer(t);
-              if (t <= 0) {
-                clearInterval(timerRef.current);
-                setQrExpired(true);
-                setQrImage(null);
-              }
-            }, 1000);
+        if (stData.connected) { onLogin(stData.phone || ""); return; }
 
-            // Auth poll start karo
-            startPolling();
-            break;
+        // QR try karo
+        if (stData.hasQR) {
+          const res = await fetch(`${BACKEND_URL}/api/qr`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.qr) {
+              setQrImage(data.qr);
+              setQrLoading(false);
+              setBackendStatus("");
+              got = true;
+
+              // Timer start karo
+              clearInterval(timerRef.current);
+              let t = QR_EXPIRE;
+              timerRef.current = setInterval(() => {
+                t--;
+                setQrTimer(t);
+                if (t <= 0) {
+                  clearInterval(timerRef.current);
+                  setQrExpired(true);
+                  setQrImage(null);
+                }
+              }, 1000);
+
+              // Auth poll start karo
+              startPolling();
+              break;
+            }
           }
         }
       } catch {}
@@ -263,9 +288,10 @@ function LoginScreen({ onLogin }) {
 
     if (!got) {
       setQrLoading(false);
-      setQrError("QR generate nahi hua, dobara try karo");
+      setBackendStatus("");
+      setQrError("QR generate nahi hua — Railway server slow hai, dobara try karo");
     }
-  }, [startPolling]);
+  }, [startPolling, qrExpired, qrError, onLogin]);
 
   // Component mount pe auto fetch
   useEffect(() => {
@@ -321,9 +347,11 @@ function LoginScreen({ onLogin }) {
             width:210, height:210,
           }}>
             {qrLoading && (
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, padding:"0 8px" }}>
                 <span className="spin" style={{ color:"#25d366", fontSize:28 }}>{Icon.refresh}</span>
-                <span style={{ fontSize:11, color:"#555", fontFamily:"var(--mono)" }}>QR load ho raha hai...</span>
+                <span style={{ fontSize:11, color:"#888", fontFamily:"var(--mono)", textAlign:"center", lineHeight:1.5 }}>
+                  {backendStatus || "Connect ho raha hai..."}
+                </span>
               </div>
             )}
 
